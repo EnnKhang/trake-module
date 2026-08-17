@@ -1,0 +1,6 @@
+milvus_demo.db
+data/
+*.npy
+*.db
+__pycache__/
+.ipynb_checkpoints/
