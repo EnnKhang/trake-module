@@ -126,10 +126,10 @@ class TrakeEngine:
     def solve_trake(
         self,
         structured_query,
-        top_k_videos: int = 5,
+        top_k_videos: int = 20,
         min_gap: int = 1,
-    ) -> tuple[str | None, list[int]]:
-        """Thuật toán chính: Tìm video tối ưu và căn chỉnh chuỗi mốc thời gian bằng DP O(N*T)."""
+    ) -> list[tuple[str, list[int], float]]:
+        """Trả về danh sách các video ứng viên đã căn chỉnh frame, sắp xếp theo điểm giảm dần."""
         events = structured_query.events
         N = len(events)
         candidate_vids = self.retrieve_candidate_videos(
@@ -137,14 +137,10 @@ class TrakeEngine:
         )
 
         if not candidate_vids:
-            return None, []
+            return []
 
-        # Vector hóa toàn bộ các sub-events
         event_embeddings = np.stack([self._encode_text(ev.description) for ev in events])
-
-        best_video_id = None
-        best_score = -float("inf")
-        best_frames = []
+        results = []
 
         for vid in candidate_vids:
             features, frame_ids = self._load_video_features(vid)
@@ -152,10 +148,8 @@ class TrakeEngine:
                 continue
 
             T = len(features)
-            # Ma trận tương đồng Cosine giữa N sub-events và T frames: Shape (N, T)
             sim_matrix = np.dot(event_embeddings, features.T)
 
-            # Quy hoạch động Viterbi tối ưu bằng Prefix Max O(N*T)
             dp = np.full((N, T), -np.inf, dtype=np.float32)
             backtrack = np.full((N, T), -1, dtype=np.int32)
 
@@ -185,8 +179,7 @@ class TrakeEngine:
             last_t = int(np.argmax(dp[N - 1, :]))
             current_score = float(dp[N - 1, last_t])
 
-            if current_score > best_score and current_score != -np.inf and last_t != -1:
-                # Dựng lại đường đi tối ưu
+            if current_score != -np.inf and last_t != -1:
                 path = [last_t]
                 curr = last_t
                 valid_path = True
@@ -199,11 +192,11 @@ class TrakeEngine:
 
                 if valid_path:
                     path.reverse()
-                    best_score = current_score
-                    best_video_id = vid
-                    best_frames = [frame_ids[idx] for idx in path]
+                    aligned_frames = [int(frame_ids[idx]) for idx in path]
+                    # Làm sạch tên video (loại bỏ đuôi .mp4 nếu có)
+                    clean_vid = vid.replace(".mp4", "")
+                    results.append((clean_vid, aligned_frames, current_score))
 
-        if not best_frames or best_score == -float("inf"):
-            return None, []
-
-        return best_video_id, best_frames
+        # Sắp xếp theo tổng điểm tương đồng giảm dần
+        results.sort(key=lambda x: -x[2])
+        return results
